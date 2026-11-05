@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+  }
+
+  code, pre, .font-mono, .tabular-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes rowShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+@keyframes rowSuccessPop {
+  0% { transform: scale(0.98); opacity: 0.85; }
+  50% { transform: scale(1.015); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-row-shake {
+  animation: rowShake 0.35s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.animate-row-pop {
+  animation: rowSuccessPop 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}

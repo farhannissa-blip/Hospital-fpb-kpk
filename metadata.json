@@ -1,0 +1,6 @@
+{
+  "name": "3D Hospital Surgery – Misi Dokter Cilik FPB & KPK",
+  "description": "Game edukasi matematika FPB dan KPK metode tabel pembagian bilangan prima (Media Pembelajaran SDN 66 Banda Aceh).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

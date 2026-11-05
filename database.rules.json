@@ -1,0 +1,31 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "players": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['uid', 'playerName', 'schoolName', 'grade', 'highScore', 'coins', 'fpbUnlockedLevel', 'kpkUnlockedLevel', 'houseTier', 'updatedAt']) && newData.child('uid').val() === $uid && newData.child('playerName').isString() && newData.child('playerName').val().length >= 1 && newData.child('playerName').val().length <= 60 && newData.child('schoolName').isString() && newData.child('schoolName').val().length >= 1 && newData.child('schoolName').val().length <= 80 && newData.child('grade').isNumber() && newData.child('grade').val() >= 1 && newData.child('grade').val() <= 6 && newData.child('highScore').isNumber() && newData.child('highScore').val() >= 0 && (!data.exists() || newData.child('highScore').val() >= data.child('highScore').val()) && newData.child('coins').isNumber() && newData.child('coins').val() >= 0 && newData.child('fpbUnlockedLevel').isNumber() && newData.child('fpbUnlockedLevel').val() >= 1 && newData.child('fpbUnlockedLevel').val() <= 20 && newData.child('kpkUnlockedLevel').isNumber() && newData.child('kpkUnlockedLevel').val() >= 1 && newData.child('kpkUnlockedLevel').val() <= 20 && newData.child('houseTier').isNumber() && newData.child('houseTier').val() >= 1 && newData.child('houseTier').val() <= 5"
+      }
+    },
+
+    "leaderboard": {
+      ".read": true,
+      ".indexOn": ["highScore"],
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['uid', 'deviceId', 'playerName', 'schoolName', 'grade', 'highScore', 'highestLevel', 'rescuedCount', 'coins', 'updatedAt']) && newData.child('uid').val() === $uid && newData.child('playerName').isString() && newData.child('playerName').val().length >= 1 && newData.child('playerName').val().length <= 60 && newData.child('schoolName').isString() && newData.child('schoolName').val().length >= 1 && newData.child('schoolName').val().length <= 80 && newData.child('grade').isNumber() && newData.child('grade').val() >= 1 && newData.child('grade').val() <= 6 && newData.child('highScore').isNumber() && newData.child('highScore').val() >= 0 && newData.child('highScore').val() <= 500000 && (!data.exists() || newData.child('highScore').val() >= data.child('highScore').val()) && newData.child('highestLevel').isNumber() && newData.child('highestLevel').val() >= 1 && newData.child('highestLevel').val() <= 20 && newData.child('rescuedCount').isNumber() && newData.child('rescuedCount').val() >= 0 && newData.child('rescuedCount').val() <= 7 && newData.child('coins').isNumber() && newData.child('coins').val() >= 0"
+      }
+    },
+
+    "deviceRegistry": {
+      "$deviceId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid)",
+        ".validate": "newData.hasChildren(['uid', 'deviceId', 'registeredAt']) && newData.child('uid').val() === auth.uid"
+      }
+    }
+  }
+}
