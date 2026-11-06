@@ -1288,13 +1288,23 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
+    // Deteksi otomatis perangkat HP, Tablet Sentuh, atau Layar Sentuh Besar PID (4K/FHD) agar berjalan ekstra ringan
+    const isLightDevice =
+      isSoftwareGl ||
+      width < 1024 ||
+      width >= 1900 ||
+      (typeof navigator !== 'undefined' &&
+        (navigator.maxTouchPoints > 0 ||
+          (navigator.hardwareConcurrency &&
+            navigator.hardwareConcurrency <= 6)));
+
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 110);
     camera.position.set(0, 4.5, 23);
 
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({
-        antialias: !isSoftwareGl,
+        antialias: !isSoftwareGl && !isLightDevice,
         powerPreference: 'high-performance',
       });
     } catch {
@@ -1306,12 +1316,26 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     // Kontras dan eksposur ditingkatkan agar warna sangat eyecatching & realistis
     renderer.toneMappingExposure = 1.28;
-    renderer.setPixelRatio(
-      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2)
-    );
-    renderer.setSize(width, height);
-    renderer.shadowMap.enabled = !isSoftwareGl;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Resolusi adaptif: membatasi buffer internal di HP Retina & layar PID 4K agar ringan dan bebas lag
+    const applyAdaptiveRendererSize = (w: number, h: number) => {
+      const maxDim = isSoftwareGl ? 800 : isLightDevice ? 1280 : 1680;
+      const scale = Math.min(1, maxDim / Math.max(w, h, 1));
+      renderer.setPixelRatio(1);
+      renderer.setSize(
+        Math.max(1, Math.round(w * scale)),
+        Math.max(1, Math.round(h * scale)),
+        false
+      );
+      renderer.domElement.style.width = '100%';
+      renderer.domElement.style.height = '100%';
+      renderer.domElement.style.display = 'block';
+    };
+    applyAdaptiveRendererSize(width, height);
+
+    const enableRealtimeShadows = !isSoftwareGl && !isLightDevice;
+    renderer.shadowMap.enabled = enableRealtimeShadows;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(renderer.domElement);
 
     const handleContextLost = (event: Event) => {
@@ -1332,16 +1356,21 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
       false
     );
 
-    // Environment Map Prosedural untuk refleksi logam & kaca realistis
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    const envTexture = pmremGenerator.fromScene(
-      new RoomEnvironment(),
-      0.04
-    ).texture;
-    scene.environment = envTexture;
-    pmremGenerator.dispose();
+    // Environment Map hanya dibuat pada perangkat desktop non-sentuh kelas atas agar HP & PID sangat ringan
+    let envTexture: THREE.Texture | null = null;
+    if (!isLightDevice) {
+      const pmremGenerator = new THREE.PMREMGenerator(renderer);
+      envTexture = pmremGenerator.fromScene(
+        new RoomEnvironment(),
+        0.04
+      ).texture;
+      scene.environment = envTexture;
+      pmremGenerator.dispose();
+    }
 
-    const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+    const maxAnisotropy = isLightDevice
+      ? 1
+      : Math.min(4, renderer.capabilities.getMaxAnisotropy());
     const shadowTex = createContactShadowTexture();
     const contactShadowMat = new THREE.MeshBasicMaterial({
       map: shadowTex,
@@ -1351,23 +1380,25 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
     });
 
     // Pencahayaan Global Cerah & Kontras Tinggi
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x38bdf8, 1.35);
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x38bdf8, 1.45);
     hemiLight.position.set(0, 20, 0);
     scene.add(hemiLight);
 
     const sunLight = new THREE.DirectionalLight(0xfffbeb, 2.75);
     sunLight.position.set(8, 16, 18);
-    sunLight.castShadow = !isSoftwareGl;
-    sunLight.shadow.mapSize.set(1024, 1024);
-    sunLight.shadow.camera.near = 0.5;
-    sunLight.shadow.camera.far = 48;
-    const d = 15;
-    sunLight.shadow.camera.left = -d;
-    sunLight.shadow.camera.right = d;
-    sunLight.shadow.camera.top = d;
-    sunLight.shadow.camera.bottom = -d;
-    sunLight.shadow.bias = -0.0005;
-    sunLight.shadow.normalBias = 0.02;
+    sunLight.castShadow = enableRealtimeShadows;
+    if (enableRealtimeShadows) {
+      sunLight.shadow.mapSize.set(512, 512);
+      sunLight.shadow.camera.near = 0.5;
+      sunLight.shadow.camera.far = 48;
+      const d = 15;
+      sunLight.shadow.camera.left = -d;
+      sunLight.shadow.camera.right = d;
+      sunLight.shadow.camera.top = d;
+      sunLight.shadow.camera.bottom = -d;
+      sunLight.shadow.bias = -0.0005;
+      sunLight.shadow.normalBias = 0.02;
+    }
     scene.add(sunLight);
 
     // Lampu Sorot Ruang Operasi Utama & Lampu Terang Ruangan Dalam
@@ -3024,10 +3055,13 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
       renderer.compile(scene, camera);
     }
 
-    // Loop Animasi
+    // Loop Animasi Hemat Daya & Performa Tinggi untuk HP dan PID
     const clock = new THREE.Clock();
     let frameId = 0;
     let isDisposed = false;
+    let lastRenderTime = -1;
+    let lastEkgDrawTime = -1;
+    const minFrameInterval = isLightDevice ? 0.026 : 0; // ~38 FPS stabil di HP & PID agar sentuhan layar sangat responsif
 
     const afterDraw = (cb: () => void) => {
       const gl = renderer.getContext() as WebGL2RenderingContext;
@@ -3050,9 +3084,19 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
 
     const tick = () => {
       if (isDisposed) return;
-      const rawDt = clock.getDelta();
-      const dt = Math.min(rawDt, 0.05);
       const elapsed = clock.getElapsedTime();
+      if (
+        !isSoftwareGl &&
+        minFrameInterval > 0 &&
+        lastRenderTime >= 0 &&
+        elapsed - lastRenderTime < minFrameInterval
+      ) {
+        frameId = requestAnimationFrame(tick);
+        return;
+      }
+      const rawDt = lastRenderTime >= 0 ? elapsed - lastRenderTime : 0.016;
+      lastRenderTime = elapsed;
+      const dt = Math.min(rawDt, 0.05);
 
       const {
         status: currStatus,
@@ -3064,102 +3108,7 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
         doctorAnimOverride: animOverride,
       } = stateRef.current;
 
-      // 1. Update Penampilan Spesifik 7 Karakter Pasien 3D & Area Bedah
-      const app = currPatient.appearance3D;
-      patientSkinMat.color.setHex(app.skinHex);
-      patientHairMat.color.setHex(app.hairHex);
-      patientPajamaMat.color.setHex(app.pajamaHex);
-      stretcherMattress.material.color.setHex(app.pajamaHex);
-      headBandageMesh.visible = Boolean(app.hasHeadBandage);
-      blueCapMesh.visible = Boolean(app.hasBlueCap);
-      eyePatchMesh.visible =
-        Boolean(app.hasEyePatch) && currStatus !== 'SUCCESS';
-      throatWrapMesh.visible =
-        Boolean(app.hasThroatWrap) && currStatus !== 'SUCCESS';
-      rightArmSlingMesh.visible =
-        Boolean(app.hasRightArmSling) && currStatus !== 'SUCCESS';
-      bellyCompressMesh.visible =
-        Boolean(app.hasBellyCompress) && currStatus !== 'SUCCESS';
-      eyeMicroscopeGroup.visible = Boolean(app.usesEyeMicroscope);
-      neuroScannerRing.visible = Boolean(app.usesNeuroScanner);
-
-      // Update Area Bedah, Kain Putih Saat Gagal & Sedikit Tetesan Darah
-      const isHealed = currStatus === 'SUCCESS';
-      const isFailedSurgery =
-        currStatus === 'FAILED' || stateRef.current.lives <= 0;
-
-      if (isFailedSurgery) {
-        failedWhiteSheetGroup.visible = true;
-        failedSheetCoverProgress = Math.min(
-          1,
-          failedSheetCoverProgress + dt * 1.8
-        );
-        // Animasi kain putih ditarik menutup tubuh hingga kepala pasien dengan lembut
-        const easeCover =
-          1 - Math.pow(1 - failedSheetCoverProgress, 3);
-        failedWhiteSheetGroup.scale.set(
-          0.25 + easeCover * 0.75,
-          0.85 + easeCover * 0.15,
-          1
-        );
-        failedWhiteSheetGroup.position.set(
-          -0.48 * (1 - easeCover),
-          (1 - easeCover) * 0.12,
-          0
-        );
-        // Sembunyikan tubuh pasien di bawah kain putih setelah kain menutup penuh
-        patientUpperBodyPivot.visible = easeCover < 0.72;
-        lowerBlanket.visible = easeCover < 0.72;
-        incisionLine.visible = false;
-        healedBandagePatch.visible = false;
-        bloodDroplets.forEach((drop) => {
-          drop.visible = false;
-        });
-        // Pompa ventilator berhenti saat garis datar (flatline)
-        ventilatorBellows.scale.set(1, 0.35, 1);
-      } else {
-        failedSheetCoverProgress = 0;
-        failedWhiteSheetGroup.visible = false;
-        patientUpperBodyPivot.visible = true;
-        lowerBlanket.visible = true;
-
-        incisionLine.visible = !isHealed;
-        healedBandagePatch.visible = isHealed;
-        bloodDroplets.forEach((drop, idx) => {
-          if (isHealed) {
-            drop.visible = false;
-          } else {
-            drop.visible = true;
-            // Denyut mikro pada titik darah saat dokter mengoperasi dan dibersihkan kasa
-            const pulse =
-              0.85 + Math.sin(elapsed * 4.2 + idx * 1.7) * 0.25;
-            drop.scale.set(pulse, 0.55, pulse);
-          }
-        });
-
-        // Animasi Pompa Ventilator Mesin Anestesi di Ruang Bedah
-        const ventScale = 0.65 + (Math.sin(elapsed * 3.2) * 0.5 + 0.5) * 0.45;
-        ventilatorBellows.scale.set(1, ventScale, 1);
-      }
-
-      // 2. Animasi Matahari, Awan Putih, Helikopter & Sirine Ambulans di Eksterior
-      sunRaysGroup.rotation.z = elapsed * 0.22;
-      const sunPulse = 1 + Math.sin(elapsed * 2.0) * 0.04;
-      sunGlowHalo.scale.setScalar(sunPulse);
-
-      skyClouds.forEach((c, idx) => {
-        c.group.position.x =
-          c.baseX + Math.sin(elapsed * c.speed + idx) * c.amp;
-        c.group.position.y =
-          c.baseY + Math.cos(elapsed * (c.speed * 0.8) + idx) * 0.18;
-      });
-
-      heliRotor.rotation.y = elapsed * 10;
-      const sirenFlash = Math.sin(elapsed * 16) > 0;
-      sirenRedMat.emissiveIntensity = sirenFlash ? 3.2 : 0.3;
-      sirenBlueMat.emissiveIntensity = sirenFlash ? 0.3 : 3.2;
-
-      // 3. Koreografi Alur Rumah Sakit 3D (Eksterior vs Alur Kedatangan vs Ruang Operasi)
+      // 1. Tentukan Zona Aktif (Eksterior vs Ruang Operasi) & Sembunyikan Zona yang Tidak Terlihat (Hemat 50% Beban GPU!)
       const isExteriorStage =
         currStatus === 'MENU' ||
         currStage === 'EXTERIOR_IDLE' ||
@@ -3168,174 +3117,133 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
         currStage === 'ENTERING_HOSPITAL' ||
         preset === 'exterior';
 
-      if (currStatus === 'MENU' || currStage === 'EXTERIOR_IDLE') {
-        const loopCycle = (elapsed * 0.45) % (Math.PI * 2);
-        ambulanceGroup.position.x = Math.sin(loopCycle) * 3.8;
-        ambulanceGroup.position.z = 3.6;
-        wheels.forEach((w) => {
-          w.rotation.z = -elapsed * 4;
-        });
-
-        const doorOpenAmount = Math.max(0, Math.cos(loopCycle)) * 0.85;
-        autoDoorLeft.position.x = -0.74 - doorOpenAmount;
-        autoDoorRight.position.x = 0.74 + doorOpenAmount;
-
-        exteriorStretcherGroup.visible = true;
-        exteriorStretcherGroup.position.set(
-          Math.cos(loopCycle * 0.5) * 1.1,
-          0,
-          1.65
-        );
-
-        exteriorDoctorRig.root.position.set(
-          Math.cos(loopCycle * 0.5) * 1.1 - 0.85,
-          0,
-          1.65
-        );
-        exteriorDoctorRig.root.rotation.y =
-          Math.sin(loopCycle * 0.5) > 0 ? -Math.PI / 2 : Math.PI / 2;
-        animateMedicalRig(exteriorDoctorRig, 'walk', elapsed);
-        animateMedicalRig(exteriorNurseRig, 'idle', elapsed, true);
-      } else if (currStage === 'AMBULANCE_ARRIVING') {
-        const targetX = 0.6;
-        ambulanceGroup.position.x = THREE.MathUtils.lerp(
-          ambulanceGroup.position.x,
-          targetX,
-          dt * 3.2
-        );
-        wheels.forEach((w) => {
-          w.rotation.z -= dt * 9;
-        });
-        exteriorStretcherGroup.visible = false;
-        autoDoorLeft.position.x = THREE.MathUtils.lerp(
-          autoDoorLeft.position.x,
-          -0.74,
-          dt * 4
-        );
-        autoDoorRight.position.x = THREE.MathUtils.lerp(
-          autoDoorRight.position.x,
-          0.74,
-          dt * 4
-        );
-        exteriorDoctorRig.root.position.set(-1.8, 0, 2.2);
-        exteriorDoctorRig.root.rotation.y = Math.PI / 2;
-        animateMedicalRig(exteriorDoctorRig, 'run', elapsed);
-        animateMedicalRig(exteriorNurseRig, 'run', elapsed, true);
-      } else if (currStage === 'PATIENT_UNLOADING') {
-        ambulanceGroup.position.x = 0.6;
-        exteriorStretcherGroup.visible = true;
-        exteriorStretcherGroup.position.set(-1.35, 0, 2.8);
-        exteriorStretcherGroup.rotation.y = Math.PI / 2;
-        exteriorDoctorRig.root.position.set(-1.35, 0, 3.65);
-        exteriorDoctorRig.root.rotation.y = Math.PI;
-        animateMedicalRig(exteriorDoctorRig, 'walk', elapsed);
-        animateMedicalRig(exteriorNurseRig, 'walk', elapsed, true);
-      } else if (currStage === 'ENTERING_HOSPITAL') {
-        autoDoorLeft.position.x = THREE.MathUtils.lerp(
-          autoDoorLeft.position.x,
-          -1.65,
-          dt * 5
-        );
-        autoDoorRight.position.x = THREE.MathUtils.lerp(
-          autoDoorRight.position.x,
-          1.65,
-          dt * 5
-        );
-        exteriorStretcherGroup.visible = true;
-        exteriorStretcherGroup.rotation.y = Math.PI / 2;
-        exteriorStretcherGroup.position.x = THREE.MathUtils.lerp(
-          exteriorStretcherGroup.position.x,
-          0,
-          dt * 4
-        );
-        exteriorStretcherGroup.position.z = THREE.MathUtils.lerp(
-          exteriorStretcherGroup.position.z,
-          0.3,
-          dt * 3.5
-        );
-        exteriorDoctorRig.root.position.set(
-          exteriorStretcherGroup.position.x,
-          0,
-          exteriorStretcherGroup.position.z + 0.85
-        );
-        exteriorDoctorRig.root.rotation.y = Math.PI;
-        animateMedicalRig(exteriorDoctorRig, 'run', elapsed);
-      }
-
-      // 4. Animasi Karakter Dokter, Perawat, Pasien & Pencahayaan di Ruang Operasi
-      let activeDoctorMode:
-        | 'idle'
-        | 'walk'
-        | 'run'
-        | 'operating'
-        | 'celebrate'
-        | 'shocked' = 'operating';
-
-      if (animOverride !== 'auto') {
-        activeDoctorMode =
-          animOverride === 'prep' ? 'operating' : animOverride;
-      } else if (currStatus === 'SUCCESS' || reaction === 'celebrate') {
-        activeDoctorMode = 'celebrate';
-      } else if (currStatus === 'FAILED' || reaction === 'shocked') {
-        activeDoctorMode = 'shocked';
-      } else if (currStage === 'DOCTOR_PREP' || currStage === 'MATH_SURGERY') {
-        activeDoctorMode = 'operating';
-      }
-
-      animateMedicalRig(mainDoctorRig, activeDoctorMode, elapsed, false);
-      animateMedicalRig(
-        scrubNurseRig,
-        currStatus === 'SUCCESS'
-          ? 'celebrate'
-          : reaction === 'shocked' || currStatus === 'FAILED'
-            ? 'shocked'
-            : 'operating',
-        elapsed,
-        true
-      );
-
-      updatePatientAnimation(patientRig, {
-        status: currStatus,
-        lives: stateRef.current.lives,
-        surgeryProgress: prog,
-        initialExpression: currPatient.initialExpression,
-        doctorReaction: reaction,
-        elapsed,
-        dt,
-      });
-
-      // Efek Pencahayaan Ruangan & Sorot Lampu Bedah sesuai kondisi Operasi
-      if (currStatus === 'FAILED') {
-        surgicalRoomLight.color.setHex(0xef4444);
-        surgicalRoomLight.intensity = 2.8 + Math.sin(elapsed * 10) * 1.2;
-        lampEmissiveMat.emissive.setHex(0xef4444);
-        healingBeamMat.opacity = 0;
-      } else if (reaction === 'shocked') {
-        surgicalRoomLight.color.setHex(0xf97316);
-        surgicalRoomLight.intensity = 3.4;
-        lampEmissiveMat.emissive.setHex(0xf97316);
-      } else if (currStatus === 'SUCCESS') {
-        surgicalRoomLight.color.setHex(0x34d399);
-        surgicalRoomLight.intensity = 3.4;
-        lampEmissiveMat.emissive.setHex(0x6ee7b7);
-        healingBeamMat.color.setHex(0x34d399);
-        healingBeamMat.opacity = 0.25 + Math.sin(elapsed * 4) * 0.08;
-      } else {
-        surgicalRoomLight.color.setHex(0xffffff);
-        surgicalRoomLight.intensity = 3.2;
-        lampEmissiveMat.emissive.setHex(0xfef08a);
-        healingBeamMat.color.setHex(0xfef08a);
-        healingBeamMat.opacity =
-          prog > 0 ? 0.1 + (prog / 100) * 0.22 : 0.08;
-      }
-
-      // 5. Penentuan Target Kamera (Responsif untuk Halaman Depan, Alur Ambulans, & Ruang Operasi)
-      if (
+      const showExteriorScene =
         isExteriorStage &&
         preset !== 'table' &&
         preset !== 'monitor' &&
-        preset !== 'doctor'
-      ) {
+        preset !== 'doctor';
+
+      exteriorGroup.visible = showExteriorScene;
+      surgeryRoomGroup.visible = !showExteriorScene;
+      surgicalRoomLight.visible = !showExteriorScene;
+      indoorFillLight.visible = !showExteriorScene;
+
+      if (showExteriorScene) {
+        // 2A. Hanya Jalankan Animasi Eksterior Saat Berada di Halaman Depan / Ambulans
+        const app = currPatient.appearance3D;
+        stretcherMattress.material.color.setHex(app.pajamaHex);
+
+        sunRaysGroup.rotation.z = elapsed * 0.22;
+        const sunPulse = 1 + Math.sin(elapsed * 2.0) * 0.04;
+        sunGlowHalo.scale.setScalar(sunPulse);
+
+        skyClouds.forEach((c, idx) => {
+          c.group.position.x =
+            c.baseX + Math.sin(elapsed * c.speed + idx) * c.amp;
+          c.group.position.y =
+            c.baseY + Math.cos(elapsed * (c.speed * 0.8) + idx) * 0.18;
+        });
+
+        heliRotor.rotation.y = elapsed * 10;
+        const sirenFlash = Math.sin(elapsed * 16) > 0;
+        sirenRedMat.emissiveIntensity = sirenFlash ? 3.2 : 0.3;
+        sirenBlueMat.emissiveIntensity = sirenFlash ? 0.3 : 3.2;
+
+        if (currStatus === 'MENU' || currStage === 'EXTERIOR_IDLE') {
+          const loopCycle = (elapsed * 0.45) % (Math.PI * 2);
+          ambulanceGroup.position.x = Math.sin(loopCycle) * 3.8;
+          ambulanceGroup.position.z = 3.6;
+          wheels.forEach((w) => {
+            w.rotation.z = -elapsed * 4;
+          });
+
+          const doorOpenAmount = Math.max(0, Math.cos(loopCycle)) * 0.85;
+          autoDoorLeft.position.x = -0.74 - doorOpenAmount;
+          autoDoorRight.position.x = 0.74 + doorOpenAmount;
+
+          exteriorStretcherGroup.visible = true;
+          exteriorStretcherGroup.position.set(
+            Math.cos(loopCycle * 0.5) * 1.1,
+            0,
+            1.65
+          );
+
+          exteriorDoctorRig.root.position.set(
+            Math.cos(loopCycle * 0.5) * 1.1 - 0.85,
+            0,
+            1.65
+          );
+          exteriorDoctorRig.root.rotation.y =
+            Math.sin(loopCycle * 0.5) > 0 ? -Math.PI / 2 : Math.PI / 2;
+          animateMedicalRig(exteriorDoctorRig, 'walk', elapsed);
+          animateMedicalRig(exteriorNurseRig, 'idle', elapsed, true);
+        } else if (currStage === 'AMBULANCE_ARRIVING') {
+          const targetX = 0.6;
+          ambulanceGroup.position.x = THREE.MathUtils.lerp(
+            ambulanceGroup.position.x,
+            targetX,
+            dt * 3.2
+          );
+          wheels.forEach((w) => {
+            w.rotation.z -= dt * 9;
+          });
+          exteriorStretcherGroup.visible = false;
+          autoDoorLeft.position.x = THREE.MathUtils.lerp(
+            autoDoorLeft.position.x,
+            -0.74,
+            dt * 4
+          );
+          autoDoorRight.position.x = THREE.MathUtils.lerp(
+            autoDoorRight.position.x,
+            0.74,
+            dt * 4
+          );
+          exteriorDoctorRig.root.position.set(-1.8, 0, 2.2);
+          exteriorDoctorRig.root.rotation.y = Math.PI / 2;
+          animateMedicalRig(exteriorDoctorRig, 'run', elapsed);
+          animateMedicalRig(exteriorNurseRig, 'run', elapsed, true);
+        } else if (currStage === 'PATIENT_UNLOADING') {
+          ambulanceGroup.position.x = 0.6;
+          exteriorStretcherGroup.visible = true;
+          exteriorStretcherGroup.position.set(-1.35, 0, 2.8);
+          exteriorStretcherGroup.rotation.y = Math.PI / 2;
+          exteriorDoctorRig.root.position.set(-1.35, 0, 3.65);
+          exteriorDoctorRig.root.rotation.y = Math.PI;
+          animateMedicalRig(exteriorDoctorRig, 'walk', elapsed);
+          animateMedicalRig(exteriorNurseRig, 'walk', elapsed, true);
+        } else if (currStage === 'ENTERING_HOSPITAL') {
+          autoDoorLeft.position.x = THREE.MathUtils.lerp(
+            autoDoorLeft.position.x,
+            -1.65,
+            dt * 5
+          );
+          autoDoorRight.position.x = THREE.MathUtils.lerp(
+            autoDoorRight.position.x,
+            1.65,
+            dt * 5
+          );
+          exteriorStretcherGroup.visible = true;
+          exteriorStretcherGroup.rotation.y = Math.PI / 2;
+          exteriorStretcherGroup.position.x = THREE.MathUtils.lerp(
+            exteriorStretcherGroup.position.x,
+            0,
+            dt * 4
+          );
+          exteriorStretcherGroup.position.z = THREE.MathUtils.lerp(
+            exteriorStretcherGroup.position.z,
+            0.3,
+            dt * 3.5
+          );
+          exteriorDoctorRig.root.position.set(
+            exteriorStretcherGroup.position.x,
+            0,
+            exteriorStretcherGroup.position.z + 0.85
+          );
+          exteriorDoctorRig.root.rotation.y = Math.PI;
+          animateMedicalRig(exteriorDoctorRig, 'run', elapsed);
+        }
+
+        // Target Kamera Eksterior
         if (currStage === 'AMBULANCE_ARRIVING') {
           _targetCamPos.set(3.2, 3.2, 22.5);
           _targetLookAt.set(0.4, 1.3, 17.2);
@@ -3346,7 +3254,6 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
           _targetCamPos.set(0, 2.5, 19.5);
           _targetLookAt.set(0, 1.3, 14.0);
         } else {
-          // Panorama Halaman Depan Rumah Sakit 3D (Menampilkan Gedung, Taman, Awan & Matahari Cerah)
           _targetCamPos.set(
             Math.sin(elapsed * 0.25) * 2.2,
             4.8,
@@ -3354,36 +3261,183 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
           );
           _targetLookAt.set(0, 3.1, 13.5);
         }
-      } else if (preset === 'monitor') {
-        _targetCamPos.set(-0.9, 1.72, 1.45);
-        _targetLookAt.set(-1.68, 1.52, -0.45);
-      } else if (preset === 'doctor') {
-        _targetCamPos.set(0.15, 1.68, 1.75);
-        _targetLookAt.set(0.05, 1.28, -0.75);
-      } else if (preset === 'table') {
-        _targetCamPos.set(0.15, 2.35, 2.55);
-        _targetLookAt.set(0.05, 0.72, 0);
       } else {
-        // Sudut Ruang Operasi Utama: Memproyeksikan Dokter, Perawat, Monitor, Peralatan Bedah & Pasien di paruh atas layar
-        const isPortraitMobile = container.clientWidth < 768;
-        _targetCamPos.set(
-          Math.sin(elapsed * 0.3) * 0.22 + (isPortraitMobile ? 1.55 : 1.75),
-          isPortraitMobile ? 2.45 : 2.32,
-          isPortraitMobile ? 4.25 : 3.65
-        );
-        _targetLookAt.set(-0.12, isPortraitMobile ? 0.58 : 0.8, -0.2);
-      }
+        // 2B. Hanya Jalankan Animasi Ruang Operasi & Monitor EKG Saat Berada di Ruang Bedah
+        const app = currPatient.appearance3D;
+        patientSkinMat.color.setHex(app.skinHex);
+        patientHairMat.color.setHex(app.hairHex);
+        patientPajamaMat.color.setHex(app.pajamaHex);
+        headBandageMesh.visible = Boolean(app.hasHeadBandage);
+        blueCapMesh.visible = Boolean(app.hasBlueCap);
+        eyePatchMesh.visible =
+          Boolean(app.hasEyePatch) && currStatus !== 'SUCCESS';
+        throatWrapMesh.visible =
+          Boolean(app.hasThroatWrap) && currStatus !== 'SUCCESS';
+        rightArmSlingMesh.visible =
+          Boolean(app.hasRightArmSling) && currStatus !== 'SUCCESS';
+        bellyCompressMesh.visible =
+          Boolean(app.hasBellyCompress) && currStatus !== 'SUCCESS';
+        eyeMicroscopeGroup.visible = Boolean(app.usesEyeMicroscope);
+        neuroScannerRing.visible = Boolean(app.usesNeuroScanner);
 
-      if (monitorPulseTimer > 0) {
-        monitorPulseTimer = Math.max(0, monitorPulseTimer - dt);
-        const pulseScale = 1 + Math.sin(monitorPulseTimer * 18) * 0.045;
-        monitorBezel.scale.set(pulseScale, pulseScale, 1);
-        screenPlane.scale.set(pulseScale, pulseScale, 1);
-        statusBarMat.emissiveIntensity = 3.2;
-      } else {
-        monitorBezel.scale.set(1, 1, 1);
-        screenPlane.scale.set(1, 1, 1);
-        statusBarMat.emissiveIntensity = 1.6;
+        const isHealed = currStatus === 'SUCCESS';
+        const isFailedSurgery =
+          currStatus === 'FAILED' || stateRef.current.lives <= 0;
+
+        if (isFailedSurgery) {
+          failedWhiteSheetGroup.visible = true;
+          failedSheetCoverProgress = Math.min(
+            1,
+            failedSheetCoverProgress + dt * 1.8
+          );
+          const easeCover =
+            1 - Math.pow(1 - failedSheetCoverProgress, 3);
+          failedWhiteSheetGroup.scale.set(
+            0.25 + easeCover * 0.75,
+            0.85 + easeCover * 0.15,
+            1
+          );
+          failedWhiteSheetGroup.position.set(
+            -0.48 * (1 - easeCover),
+            (1 - easeCover) * 0.12,
+            0
+          );
+          patientUpperBodyPivot.visible = easeCover < 0.72;
+          lowerBlanket.visible = easeCover < 0.72;
+          incisionLine.visible = false;
+          healedBandagePatch.visible = false;
+          bloodDroplets.forEach((drop) => {
+            drop.visible = false;
+          });
+          ventilatorBellows.scale.set(1, 0.35, 1);
+        } else {
+          failedSheetCoverProgress = 0;
+          failedWhiteSheetGroup.visible = false;
+          patientUpperBodyPivot.visible = true;
+          lowerBlanket.visible = true;
+
+          incisionLine.visible = !isHealed;
+          healedBandagePatch.visible = isHealed;
+          bloodDroplets.forEach((drop, idx) => {
+            if (isHealed) {
+              drop.visible = false;
+            } else {
+              drop.visible = true;
+              const pulse =
+                0.85 + Math.sin(elapsed * 4.2 + idx * 1.7) * 0.25;
+              drop.scale.set(pulse, 0.55, pulse);
+            }
+          });
+
+          const ventScale =
+            0.65 + (Math.sin(elapsed * 3.2) * 0.5 + 0.5) * 0.45;
+          ventilatorBellows.scale.set(1, ventScale, 1);
+        }
+
+        let activeDoctorMode:
+          | 'idle'
+          | 'walk'
+          | 'run'
+          | 'operating'
+          | 'celebrate'
+          | 'shocked' = 'operating';
+
+        if (animOverride !== 'auto') {
+          activeDoctorMode =
+            animOverride === 'prep' ? 'operating' : animOverride;
+        } else if (currStatus === 'SUCCESS' || reaction === 'celebrate') {
+          activeDoctorMode = 'celebrate';
+        } else if (currStatus === 'FAILED' || reaction === 'shocked') {
+          activeDoctorMode = 'shocked';
+        } else if (
+          currStage === 'DOCTOR_PREP' ||
+          currStage === 'MATH_SURGERY'
+        ) {
+          activeDoctorMode = 'operating';
+        }
+
+        animateMedicalRig(mainDoctorRig, activeDoctorMode, elapsed, false);
+        animateMedicalRig(
+          scrubNurseRig,
+          currStatus === 'SUCCESS'
+            ? 'celebrate'
+            : reaction === 'shocked' || currStatus === 'FAILED'
+              ? 'shocked'
+              : 'operating',
+          elapsed,
+          true
+        );
+
+        updatePatientAnimation(patientRig, {
+          status: currStatus,
+          lives: stateRef.current.lives,
+          surgeryProgress: prog,
+          initialExpression: currPatient.initialExpression,
+          doctorReaction: reaction,
+          elapsed,
+          dt,
+        });
+
+        if (currStatus === 'FAILED') {
+          surgicalRoomLight.color.setHex(0xef4444);
+          surgicalRoomLight.intensity = 2.8 + Math.sin(elapsed * 10) * 1.2;
+          lampEmissiveMat.emissive.setHex(0xef4444);
+          healingBeamMat.opacity = 0;
+        } else if (reaction === 'shocked') {
+          surgicalRoomLight.color.setHex(0xf97316);
+          surgicalRoomLight.intensity = 3.4;
+          lampEmissiveMat.emissive.setHex(0xf97316);
+        } else if (currStatus === 'SUCCESS') {
+          surgicalRoomLight.color.setHex(0x34d399);
+          surgicalRoomLight.intensity = 3.4;
+          lampEmissiveMat.emissive.setHex(0x6ee7b7);
+          healingBeamMat.color.setHex(0x34d399);
+          healingBeamMat.opacity = 0.25 + Math.sin(elapsed * 4) * 0.08;
+        } else {
+          surgicalRoomLight.color.setHex(0xffffff);
+          surgicalRoomLight.intensity = 3.2;
+          lampEmissiveMat.emissive.setHex(0xfef08a);
+          healingBeamMat.color.setHex(0xfef08a);
+          healingBeamMat.opacity =
+            prog > 0 ? 0.1 + (prog / 100) * 0.22 : 0.08;
+        }
+
+        if (preset === 'monitor') {
+          _targetCamPos.set(-0.9, 1.72, 1.45);
+          _targetLookAt.set(-1.68, 1.52, -0.45);
+        } else if (preset === 'doctor') {
+          _targetCamPos.set(0.15, 1.68, 1.75);
+          _targetLookAt.set(0.05, 1.28, -0.75);
+        } else if (preset === 'table') {
+          _targetCamPos.set(0.15, 2.35, 2.55);
+          _targetLookAt.set(0.05, 0.72, 0);
+        } else {
+          const isPortraitMobile = container.clientWidth < 768;
+          _targetCamPos.set(
+            Math.sin(elapsed * 0.3) * 0.22 + (isPortraitMobile ? 1.55 : 1.75),
+            isPortraitMobile ? 2.45 : 2.32,
+            isPortraitMobile ? 4.25 : 3.65
+          );
+          _targetLookAt.set(-0.12, isPortraitMobile ? 0.58 : 0.8, -0.2);
+        }
+
+        if (monitorPulseTimer > 0) {
+          monitorPulseTimer = Math.max(0, monitorPulseTimer - dt);
+          const pulseScale = 1 + Math.sin(monitorPulseTimer * 18) * 0.045;
+          monitorBezel.scale.set(pulseScale, pulseScale, 1);
+          screenPlane.scale.set(pulseScale, pulseScale, 1);
+          statusBarMat.emissiveIntensity = 3.2;
+        } else {
+          monitorBezel.scale.set(1, 1, 1);
+          screenPlane.scale.set(1, 1, 1);
+          statusBarMat.emissiveIntensity = 1.6;
+        }
+
+        // Throttle pembaruan tekstur Canvas 2D EKG ke ~11 FPS agar tidak membebani bus GPU HP & PID
+        if (elapsed - lastEkgDrawTime >= 0.09 || monitorPulseTimer > 0) {
+          lastEkgDrawTime = elapsed;
+          drawEkgMonitor(elapsed);
+        }
       }
 
       const dampFactor = 1 - Math.exp(-3.8 * dt);
@@ -3391,7 +3445,6 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
       _currentLookAt.lerp(_targetLookAt, dampFactor);
       camera.lookAt(_currentLookAt);
 
-      drawEkgMonitor(elapsed);
       renderer.render(scene, camera);
 
       if (isSoftwareGl) {
@@ -3467,7 +3520,7 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
       const newH = container.clientHeight || window.innerHeight;
       camera.aspect = newW / newH;
       camera.updateProjectionMatrix();
-      renderer.setSize(newW, newH);
+      applyAdaptiveRendererSize(newW, newH);
     };
 
     window.addEventListener('pointerdown', handlePointerDown);
@@ -3492,7 +3545,7 @@ export const OperatingRoom3D: React.FC<OperatingRoom3DProps> = ({
       shadowTex.dispose();
       signTex.dispose();
       ekgTexture.dispose();
-      envTexture.dispose();
+      if (envTexture) envTexture.dispose();
       renderer.dispose();
       if (renderer.domElement && renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);

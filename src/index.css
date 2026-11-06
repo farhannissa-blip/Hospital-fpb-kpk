@@ -8,12 +8,27 @@
 
   body {
     font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  button, a, input, select, [role="button"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   code, pre, .font-mono, .tabular-nums {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 @keyframes rowShake {

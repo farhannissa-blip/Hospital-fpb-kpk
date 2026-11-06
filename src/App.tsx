@@ -30,6 +30,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Ambulance,
+  BookOpen,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -81,6 +82,7 @@ import {
 import { DreamHouse3D } from './components/DreamHouse3D';
 import { MandatoryTestModal } from './components/MandatoryTestModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
+import { TutorialFpbKpkModal } from './components/TutorialFpbKpkModal';
 
 interface CompletedRow {
   rowNumber: number;
@@ -276,6 +278,10 @@ export default function App() {
   const [forceFallback2D, setForceFallback2D] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isTestModalOpen, setIsTestModalOpen] = useState<boolean>(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
+  const [tutorialInitialTab, setTutorialInitialTab] = useState<
+    'KONSEP' | 'FPB' | 'KPK' | 'SOAL_AKTIF'
+  >('FPB');
   const [activeNumpadField, setActiveNumpadField] = useState<
     'prime' | 'quotientA' | 'quotientB' | 'final'
   >('prime');
@@ -460,7 +466,8 @@ export default function App() {
       flowStage !== 'MATH_SURGERY' ||
       viewMode !== 'HOSPITAL' ||
       isLeaderboardOpen ||
-      isTestModalOpen
+      isTestModalOpen ||
+      isTutorialOpen
     ) {
       return;
     }
@@ -488,6 +495,7 @@ export default function App() {
     viewMode,
     isLeaderboardOpen,
     isTestModalOpen,
+    isTutorialOpen,
   ]);
 
   /**
@@ -1380,6 +1388,26 @@ export default function App() {
             type="button"
             onClick={() => {
               soundEngine.playClick();
+              setTutorialInitialTab(
+                gameStatus === 'PLAYING'
+                  ? 'SOAL_AKTIF'
+                  : selectedCategory === 'KPK'
+                    ? 'KPK'
+                    : 'FPB'
+              );
+              setIsTutorialOpen(true);
+            }}
+            className="px-2.5 py-1 text-[11px] sm:text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-500 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+            title="Buka Petunjuk & Tutorial Pengerjaan FPB dan KPK"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-amber-200 shrink-0" />
+            <span>Tutorial</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playClick();
               setIsTestModalOpen(true);
             }}
             className="px-2 py-1 text-[11px] font-extrabold text-emerald-300 bg-slate-800 hover:bg-slate-700 border border-emerald-500/40 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
@@ -1649,17 +1677,33 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="pt-1.5 flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          soundEngine.playClick();
-                          setMenuStep(1);
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
-                      >
-                        &larr; Kembali
-                      </button>
+                    <div className="pt-1.5 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundEngine.playClick();
+                            setMenuStep(1);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                        >
+                          &larr; Kembali
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundEngine.playClick();
+                            setTutorialInitialTab(
+                              selectedCategory === 'KPK' ? 'KPK' : 'FPB'
+                            );
+                            setIsTutorialOpen(true);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-xs font-extrabold flex items-center gap-1 cursor-pointer"
+                        >
+                          <BookOpen className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Cara {selectedCategory}</span>
+                        </button>
+                      </div>
                       <button
                         type="button"
                         onClick={() => {
@@ -1836,12 +1880,26 @@ export default function App() {
 
                     <button
                       type="button"
+                      onClick={() => {
+                        soundEngine.playClick();
+                        setTutorialInitialTab('SOAL_AKTIF');
+                        setIsTutorialOpen(true);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-extrabold flex items-center gap-1 cursor-pointer"
+                      title="Lihat Petunjuk & Cara Mengerjakan Soal Ini"
+                    >
+                      <BookOpen className="w-3.5 h-3.5 text-amber-200" />
+                      <span>Petunjuk {currentQuestion.category}</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={handleSurpriseNewQuestion}
                       className="px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] font-extrabold flex items-center gap-1 cursor-pointer"
                       title="Ganti dengan soal kejutan acak baru"
                     >
                       <Dices className="w-3.5 h-3.5" />
-                      <span>Soal Kejutan Baru</span>
+                      <span className="hidden sm:inline">Soal Baru</span>
                     </button>
 
                     <button
@@ -2166,12 +2224,76 @@ export default function App() {
                             ))}
                           </div>
 
-                          {showHint && (
-                            <span className="text-[10px] font-bold text-amber-300 font-mono">
-                              Prima Valid: {validPrimesForActiveRow.join(' / ')}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              soundEngine.playClick();
+                              setShowHint((prev) => !prev);
+                            }}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold flex items-center gap-1 cursor-pointer ${
+                              showHint
+                                ? 'bg-amber-400 text-slate-950'
+                                : 'bg-slate-800 text-amber-300 hover:bg-slate-700 border border-amber-400/40'
+                            }`}
+                          >
+                            <HelpCircle className="w-3 h-3" />
+                            <span>
+                              {showHint ? 'Tutup Bantuan' : 'Bantuan Baris Ini'}
                             </span>
-                          )}
+                          </button>
                         </div>
+
+                        {/* Kotak Petunjuk Langkah Baris Aktif (Jika Tombol Bantuan Diklik) */}
+                        {showHint && (
+                          <div className="px-2.5 py-1.5 rounded-lg bg-amber-950/90 border border-amber-400/60 text-amber-100 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <span className="font-extrabold text-amber-300">
+                                Petunjuk Langkah #{completedRows.length + 1}:{' '}
+                              </span>
+                              <span>
+                                1. Pilih Prima{' '}
+                                <strong className="font-mono text-white">
+                                  {validPrimesForActiveRow.join(' / ')}
+                                </strong>{' '}
+                                &rarr; 2. Hasil I:{' '}
+                                <strong className="font-mono text-white">
+                                  {(() => {
+                                    const p =
+                                      Number(primeInput) ||
+                                      validPrimesForActiveRow[0] ||
+                                      2;
+                                    return activeDividendA % p === 0
+                                      ? `${activeDividendA}÷${p}=${activeDividendA / p}`
+                                      : `tetap ${activeDividendA}`;
+                                  })()}
+                                </strong>{' '}
+                                &rarr; 3. Hasil II:{' '}
+                                <strong className="font-mono text-white">
+                                  {(() => {
+                                    const p =
+                                      Number(primeInput) ||
+                                      validPrimesForActiveRow[0] ||
+                                      2;
+                                    return activeDividendB % p === 0
+                                      ? `${activeDividendB}÷${p}=${activeDividendB / p}`
+                                      : `tetap ${activeDividendB}`;
+                                  })()}
+                                </strong>
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                soundEngine.playClick();
+                                setTutorialInitialTab('SOAL_AKTIF');
+                                setIsTutorialOpen(true);
+                              }}
+                              className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-extrabold text-[10px] cursor-pointer shrink-0"
+                            >
+                              Buka Tutorial Lengkap
+                            </button>
+                          </div>
+                        )}
 
                         {/* Barisan Tombol Pilihan Angka Sesuai Kolom Aktif */}
                         <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -2605,6 +2727,18 @@ export default function App() {
           setIsTestModalOpen(false);
           handleLoadMandatoryCase(cat, a, b);
         }}
+      />
+
+      {/* Modal Petunjuk & Tutorial Pengerjaan Tabel FPB dan KPK */}
+      <TutorialFpbKpkModal
+        isOpen={isTutorialOpen}
+        onClose={() => setIsTutorialOpen(false)}
+        initialTab={tutorialInitialTab}
+        currentQuestion={currentQuestion}
+        activeDividendA={activeDividendA}
+        activeDividendB={activeDividendB}
+        isTableFinished={isTableFinished}
+        completedPrimes={completedRows.map((r) => r.primeDivisor)}
       />
     </div>
   );

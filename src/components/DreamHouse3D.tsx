@@ -129,16 +129,40 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
     const _currentLookAt = new THREE.Vector3(0, 2.2, 0);
 
     let renderer: THREE.WebGLRenderer;
+    let isSoftwareGl = false;
     try {
       const probeCanvas = document.createElement('canvas');
       const glProbe =
-        probeCanvas.getContext('webgl2') || probeCanvas.getContext('webgl');
+        (probeCanvas.getContext('webgl2') as WebGLRenderingContext | null) ||
+        (probeCanvas.getContext('webgl') as WebGLRenderingContext | null);
       if (!glProbe) {
         setWebglFallback(true);
         return;
       }
+      const debugExt = glProbe.getExtension('WEBGL_debug_renderer_info');
+      const rendererStr = debugExt
+        ? String(glProbe.getParameter(debugExt.UNMASKED_RENDERER_WEBGL) || '')
+        : '';
+      glProbe.getExtension('WEBGL_lose_context')?.loseContext();
+      isSoftwareGl = /SwiftShader|llvmpipe|Software/i.test(rendererStr);
+    } catch {
+      setWebglFallback(true);
+      return;
+    }
+
+    // Deteksi otomatis perangkat HP, Tablet, atau Layar Sentuh Besar PID (4K/FHD) agar ekstra ringan
+    const isLightDevice =
+      isSoftwareGl ||
+      width < 1024 ||
+      width >= 1900 ||
+      (typeof navigator !== 'undefined' &&
+        (navigator.maxTouchPoints > 0 ||
+          (navigator.hardwareConcurrency &&
+            navigator.hardwareConcurrency <= 6)));
+
+    try {
       renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: !isSoftwareGl && !isLightDevice,
         powerPreference: 'high-performance',
       });
     } catch {
@@ -146,20 +170,25 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
       return;
     }
 
-    const glCtx = renderer.getContext();
-    const debugInfo = glCtx.getExtension('WEBGL_debug_renderer_info');
-    const rendererStr = debugInfo
-      ? glCtx.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || ''
-      : '';
-    const isSoftwareGl = /SwiftShader|llvmpipe|Software/i.test(rendererStr);
+    const applyAdaptiveRendererSize = (w: number, h: number) => {
+      const maxDim = isSoftwareGl ? 800 : isLightDevice ? 1280 : 1680;
+      const scale = Math.min(1, maxDim / Math.max(w, h, 1));
+      renderer.setPixelRatio(1);
+      renderer.setSize(
+        Math.max(1, Math.round(w * scale)),
+        Math.max(1, Math.round(h * scale)),
+        false
+      );
+      renderer.domElement.style.width = '100%';
+      renderer.domElement.style.height = '100%';
+      renderer.domElement.style.display = 'block';
+    };
+    applyAdaptiveRendererSize(width, height);
 
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(
-      isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2)
-    );
+    const enableRealtimeShadows = !isSoftwareGl && !isLightDevice;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
-    renderer.shadowMap.enabled = !isSoftwareGl;
+    renderer.toneMappingExposure = 1.15;
+    renderer.shadowMap.enabled = enableRealtimeShadows;
     renderer.shadowMap.type = THREE.PCFShadowMap;
 
     container.innerHTML = '';
@@ -184,26 +213,28 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
     );
 
     // Pencahayaan Tropis Cerah untuk Estate Rumah Mewah
-    const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x15803d, 1.15);
+    const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x15803d, 1.25);
     hemiLight.position.set(0, 30, 0);
     scene.add(hemiLight);
 
     const sunLight = new THREE.DirectionalLight(0xfffbeb, 2.5);
     sunLight.position.set(18, 28, 20);
-    sunLight.castShadow = !isSoftwareGl;
-    sunLight.shadow.mapSize.width = isSoftwareGl ? 512 : 1024;
-    sunLight.shadow.mapSize.height = isSoftwareGl ? 512 : 1024;
-    sunLight.shadow.camera.near = 1;
-    sunLight.shadow.camera.far = 80;
-    const d = 22;
-    sunLight.shadow.camera.left = -d;
-    sunLight.shadow.camera.right = d;
-    sunLight.shadow.camera.top = d;
-    sunLight.shadow.camera.bottom = -d;
-    sunLight.shadow.bias = -0.0005;
+    sunLight.castShadow = enableRealtimeShadows;
+    if (enableRealtimeShadows) {
+      sunLight.shadow.mapSize.width = 512;
+      sunLight.shadow.mapSize.height = 512;
+      sunLight.shadow.camera.near = 1;
+      sunLight.shadow.camera.far = 80;
+      const d = 22;
+      sunLight.shadow.camera.left = -d;
+      sunLight.shadow.camera.right = d;
+      sunLight.shadow.camera.top = d;
+      sunLight.shadow.camera.bottom = -d;
+      sunLight.shadow.bias = -0.0005;
+    }
     scene.add(sunLight);
 
-    // Material Bersama
+    // Material Bersama (Menggunakan MeshStandardMaterial ringan tanpa shader transmisi berat)
     const grassMat = new THREE.MeshStandardMaterial({
       color: 0x16a34a,
       roughness: 0.85,
@@ -227,12 +258,12 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
       roughness: 0.35,
       metalness: 0.4,
     });
-    const glassMat = new THREE.MeshPhysicalMaterial({
+    const glassMat = new THREE.MeshStandardMaterial({
       color: 0x38bdf8,
       transparent: true,
-      opacity: 0.55,
-      roughness: 0.1,
-      metalness: 0.2,
+      opacity: 0.65,
+      roughness: 0.15,
+      metalness: 0.3,
     });
     const goldMat = new THREE.MeshStandardMaterial({
       color: 0xfbbf24,
@@ -1237,6 +1268,8 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
     const clock = new THREE.Clock();
     let frameId = 0;
     let isDisposed = false;
+    let lastRenderTime = -1;
+    const minFrameInterval = isLightDevice ? 0.026 : 0; // ~38 FPS stabil untuk HP & PID
 
     const afterDraw = (cb: () => void) => {
       const gl = renderer.getContext() as WebGL2RenderingContext;
@@ -1259,8 +1292,19 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
 
     const tick = () => {
       if (isDisposed) return;
-      const dt = Math.min(clock.getDelta(), 0.05);
       const elapsed = clock.getElapsedTime();
+      if (
+        !isSoftwareGl &&
+        minFrameInterval > 0 &&
+        lastRenderTime >= 0 &&
+        elapsed - lastRenderTime < minFrameInterval
+      ) {
+        frameId = requestAnimationFrame(tick);
+        return;
+      }
+      const rawDt = lastRenderTime >= 0 ? elapsed - lastRenderTime : 0.016;
+      lastRenderTime = elapsed;
+      const dt = Math.min(rawDt, 0.05);
 
       const {
         houseTier: tier,
@@ -1379,7 +1423,7 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
       const h = container.clientHeight || window.innerHeight;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      applyAdaptiveRendererSize(w, h);
     };
 
     window.addEventListener('resize', handleResize);
@@ -1519,7 +1563,7 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
         </header>
 
         {/* Bar Sudut Kamera Horizontal Ringkas (Bisa Digeser Kiri-Kanan di HP) */}
-        <div className="px-2 sm:px-5 py-1 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <div className="px-2 sm:px-5 py-1 bg-slate-950/95 border-b border-slate-800/80 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           <span className="text-[10px] sm:text-[11px] font-extrabold text-amber-300 flex items-center gap-1 shrink-0 pr-1">
             <Compass className="w-3.5 h-3.5" />
             <span>Kamera 3D:</span>
@@ -1555,14 +1599,14 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
       {/* AREA TENGAH TERBUKA LEBAR: Menampilkan Animasi Rumah 3D Tanpa Terhalang Kotak */}
       <div className="relative z-10 flex-1 pointer-events-none flex flex-col justify-between px-2.5 py-1.5">
         <div className="flex items-center justify-between gap-2">
-          <div className="px-2.5 py-1 rounded-xl bg-slate-950/75 border border-slate-700/80 text-white text-[10px] sm:text-xs font-bold flex items-center gap-1.5 shadow">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <div className="px-2.5 py-1 rounded-xl bg-slate-950/90 border border-slate-700/80 text-white text-[10px] sm:text-xs font-bold flex items-center gap-1.5 shadow">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
             <span>
               🏡 {currentTierMeta.name} · {progress.purchasedItems.length}/{HOUSE_UPGRADE_ITEMS.length} Barang
             </span>
           </div>
 
-          <div className="px-2.5 py-1 rounded-xl bg-slate-950/70 border border-slate-700/70 text-sky-200 text-[10px] sm:text-[11px] font-semibold">
+          <div className="px-2.5 py-1 rounded-xl bg-slate-950/90 border border-slate-700/70 text-sky-200 text-[10px] sm:text-[11px] font-semibold">
             👆 Geser area 3D untuk memutar rumah
           </div>
         </div>
@@ -1581,7 +1625,7 @@ export const DreamHouse3D: React.FC<DreamHouse3DProps> = ({
           data-ui-panel="true"
           className="relative z-20 shrink-0 w-full max-w-5xl mx-auto px-2 sm:px-4 pb-2 pointer-events-auto"
         >
-          <div className="bg-white/95 backdrop-blur-md border-2 border-slate-300 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-white/98 border-2 border-slate-300 rounded-2xl shadow-2xl overflow-hidden">
             {/* Header Tab Toko Ringkas */}
             <div className="px-3 py-1.5 sm:px-4 sm:py-2 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-1.5">
               <div className="flex items-center gap-1.5">
